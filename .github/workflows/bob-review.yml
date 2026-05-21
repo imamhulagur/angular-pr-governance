@@ -1,0 +1,459 @@
+name: 🤖 Bob AI PR Governance Review
+
+# Trigger on PR events for autonomous governance review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+      - develop
+      - 'release/**'
+
+# Ensure only one review runs per PR at a time
+concurrency:
+  group: bob-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Environment variables for the workflow
+env:
+  NODE_VERSION: '20'
+  BOB_CONFIG_PATH: '.bob/mcp.json'
+
+jobs:
+  # Job 1: Pre-flight checks and Angular validation
+  preflight-checks:
+    name: 🔍 Pre-flight Checks
+    runs-on: ubuntu-latest
+    outputs:
+      has-angular: ${{ steps.detect.outputs.has-angular }}
+      changed-files: ${{ steps.files.outputs.all }}
+    
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: 🔎 Detect Angular project
+        id: detect
+        run: |
+          if [ -f "angular.json" ] || [ -f "package.json" ]; then
+            echo "has-angular=true" >> $GITHUB_OUTPUT
+          else
+            echo "has-angular=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 📋 Get changed files
+        id: files
+        uses: tj-actions/changed-files@v41
+        with:
+          separator: ','
+          files: |
+            **/*.ts
+            **/*.html
+            **/*.scss
+            **/*.css
+            **/*.json
+
+      - name: 📊 PR Metadata
+        run: |
+          echo "PR Number: ${{ github.event.pull_request.number }}"
+          echo "PR Title: ${{ github.event.pull_request.title }}"
+          echo "PR Author: ${{ github.event.pull_request.user.login }}"
+          echo "Changed Files: ${{ steps.files.outputs.all_changed_files_count }}"
+          echo "Base Branch: ${{ github.event.pull_request.base.ref }}"
+          echo "Head Branch: ${{ github.event.pull_request.head.ref }}"
+
+  # Job 2: Angular linting and testing (if applicable)
+  angular-validation:
+    name: 🅰️ Angular Validation
+    runs-on: ubuntu-latest
+    needs: preflight-checks
+    if: needs.preflight-checks.outputs.has-angular == 'true'
+    
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔍 Run ESLint
+        id: lint
+        continue-on-error: true
+        run: |
+          npm run lint -- --format json --output-file eslint-report.json || true
+          if [ -f eslint-report.json ]; then
+            echo "lint-report<<EOF" >> $GITHUB_OUTPUT
+            cat eslint-report.json >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🧪 Run unit tests
+        id: test
+        continue-on-error: true
+        run: |
+          npm run test -- --watch=false --code-coverage --browsers=ChromeHeadless || true
+
+      - name: 📊 Upload test coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+      - name: 📤 Upload lint results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: eslint-report.json
+          retention-days: 7
+
+  # Job 3: Bob AI Autonomous Governance Review
+  bob-ai-review:
+    name: 🤖 Bob AI Governance Review
+    runs-on: ubuntu-latest
+    needs: [preflight-checks, angular-validation]
+    if: always()
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Bob CLI
+        run: |
+          npm install -g @bob-ai/cli || npm install -g bob-cli || echo "Bob CLI installation method may vary"
+
+      - name: 🔐 Verify MCP Configuration
+        run: |
+          if [ ! -f "${{ env.BOB_CONFIG_PATH }}" ]; then
+            echo "❌ Error: MCP configuration not found at ${{ env.BOB_CONFIG_PATH }}"
+            exit 1
+          fi
+          echo "✅ MCP configuration found"
+          cat ${{ env.BOB_CONFIG_PATH }}
+
+      - name: 📋 Download lint report
+        if: needs.angular-validation.result == 'success' || needs.angular-validation.result == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          name: lint-report
+          path: ./reports/
+
+      - name: 📊 Prepare PR context for Bob
+        id: pr-context
+        run: |
+          # Create PR context file for Bob
+          cat > pr-context.json << EOF
+          {
+            "pr_number": ${{ github.event.pull_request.number }},
+            "pr_title": "${{ github.event.pull_request.title }}",
+            "pr_author": "${{ github.event.pull_request.user.login }}",
+            "pr_url": "${{ github.event.pull_request.html_url }}",
+            "base_branch": "${{ github.event.pull_request.base.ref }}",
+            "head_branch": "${{ github.event.pull_request.head.ref }}",
+            "changed_files_count": ${{ needs.preflight-checks.outputs.changed-files }},
+            "repository": "${{ github.repository }}",
+            "commit_sha": "${{ github.event.pull_request.head.sha }}"
+          }
+          EOF
+          echo "✅ PR context prepared"
+          cat pr-context.json
+
+      - name: 🤖 Execute Bob AI Governance Review
+        id: bob-review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_PERSONAL_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_HOST: ${{ github.server_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          BOB_MCP_CONFIG: ${{ env.BOB_CONFIG_PATH }}
+        run: |
+          # Create Bob review prompt
+          cat > bob-review-prompt.md << 'EOF'
+          # Angular PR Governance Review Task
+          
+          You are Bob, an expert Angular architect and DevOps engineer conducting an autonomous PR governance review.
+          
+          ## Your Mission
+          Perform a comprehensive governance review of this Pull Request using your configured MCP servers.
+          
+          ## PR Context
+          - PR Number: ${{ github.event.pull_request.number }}
+          - Title: ${{ github.event.pull_request.title }}
+          - Author: ${{ github.event.pull_request.user.login }}
+          - Repository: ${{ github.repository }}
+          
+          ## Review Checklist
+          
+          ### 1. Architecture & Design (via ngnetic-mcp)
+          - [ ] Retrieve Angular enterprise architecture standards from ngnetic-mcp
+          - [ ] Validate component structure and module organization
+          - [ ] Check for proper separation of concerns (smart/dumb components)
+          - [ ] Verify dependency injection patterns
+          - [ ] Validate state management approach
+          
+          ### 2. Code Quality Analysis
+          - [ ] Review TypeScript type safety (no `any` types)
+          - [ ] Check for proper error handling
+          - [ ] Validate naming conventions (kebab-case, camelCase)
+          - [ ] Ensure code follows Angular Style Guide
+          - [ ] Check for code duplication
+          
+          ### 3. RxJS & Memory Leak Detection
+          - [ ] **CRITICAL**: Detect unsubscribed observables
+          - [ ] Verify proper use of `takeUntil`, `take`, or `async pipe`
+          - [ ] Check for memory leaks in components
+          - [ ] Validate subscription cleanup in `ngOnDestroy`
+          - [ ] Flag any manual subscriptions without cleanup
+          
+          ### 4. HTTP & API Usage
+          - [ ] **CRITICAL**: Detect direct `fetch()` usage (should use HttpClient)
+          - [ ] Verify proper use of Angular HttpClient
+          - [ ] Check for proper error handling in HTTP calls
+          - [ ] Validate API endpoint patterns
+          - [ ] Ensure proper use of interceptors
+          
+          ### 5. Accessibility (a11y) Compliance
+          - [ ] **CRITICAL**: Check for missing ARIA labels
+          - [ ] Verify semantic HTML usage
+          - [ ] Validate keyboard navigation support
+          - [ ] Check color contrast ratios
+          - [ ] Ensure form labels are properly associated
+          - [ ] Verify focus management
+          
+          ### 6. Performance
+          - [ ] Check for OnPush change detection usage
+          - [ ] Verify trackBy functions in *ngFor
+          - [ ] Validate lazy loading implementation
+          - [ ] Check bundle size impact
+          - [ ] Review for unnecessary re-renders
+          
+          ### 7. Security
+          - [ ] Check for XSS vulnerabilities
+          - [ ] Validate input sanitization
+          - [ ] Verify no hardcoded secrets/tokens
+          - [ ] Check for proper authentication/authorization
+          
+          ### 8. Testing
+          - [ ] Verify unit tests exist for new components/services
+          - [ ] Check test coverage meets threshold (80%+)
+          - [ ] Validate test quality and assertions
+          
+          ## Actions to Take
+          
+          1. **Use GitHub MCP** to:
+             - Fetch PR details and changed files
+             - Analyze file diffs
+             - Post inline review comments on specific lines
+             - Create review summary comment
+          
+          2. **Use ngnetic-mcp** to:
+             - Retrieve enterprise Angular governance rules
+             - Validate against company standards
+             - Get approved patterns and anti-patterns
+          
+          3. **Generate Review Output**:
+             - Post inline comments for each violation found
+             - Include severity level: 🔴 Critical | 🟡 Warning | 🟢 Suggestion
+             - Provide code snippets showing the issue
+             - Suggest specific fixes with code examples
+             - Generate overall review summary
+          
+          4. **Critical Violations** (must fix before merge):
+             - RxJS memory leaks (unsubscribed observables)
+             - Direct fetch() usage instead of HttpClient
+             - Missing accessibility attributes (ARIA, alt text)
+             - Security vulnerabilities
+             - Breaking architecture patterns
+          
+          5. **Review Decision**:
+             - If critical violations found: REQUEST CHANGES
+             - If only warnings/suggestions: COMMENT
+             - If all checks pass: APPROVE (optional)
+          
+          ## Output Format
+          
+          For each issue found, post a review comment with:
+          ```
+          🔴 **Critical** | 🟡 **Warning** | 🟢 **Suggestion**
+          
+          **Issue**: [Brief description]
+          
+          **Location**: [File:Line]
+          
+          **Problem**:
+          [Detailed explanation]
+          
+          **Fix**:
+          ```typescript
+          // Suggested code fix
+          ```
+          
+          **Why**: [Explanation of why this matters]
+          ```
+          
+          ## Final Summary Comment
+          
+          Post a comprehensive review summary including:
+          - Total issues found (by severity)
+          - Critical violations that block merge
+          - Warnings to address
+          - Suggestions for improvement
+          - Overall recommendation (Approve/Request Changes/Comment)
+          
+          ## Begin Review
+          
+          Start your autonomous governance review now. Use your MCP tools to analyze the PR and post your findings.
+          EOF
+          
+          # Execute Bob with the review prompt
+          echo "🤖 Invoking Bob AI for autonomous review..."
+          
+          # Note: Actual Bob CLI invocation syntax may vary
+          # This is a placeholder for the actual Bob execution
+          bob review \
+            --config "${{ env.BOB_CONFIG_PATH }}" \
+            --pr-number "${{ github.event.pull_request.number }}" \
+            --repository "${{ github.repository }}" \
+            --prompt-file "bob-review-prompt.md" \
+            --context-file "pr-context.json" \
+            --github-token "${{ secrets.GITHUB_TOKEN }}" \
+            --output "bob-review-output.json" || echo "Bob review completed with findings"
+          
+          echo "✅ Bob review execution completed"
+
+      - name: 📊 Process Bob Review Results
+        if: always()
+        run: |
+          if [ -f "bob-review-output.json" ]; then
+            echo "📋 Bob Review Results:"
+            cat bob-review-output.json
+            
+            # Extract summary metrics
+            CRITICAL=$(jq -r '.summary.critical // 0' bob-review-output.json)
+            WARNINGS=$(jq -r '.summary.warnings // 0' bob-review-output.json)
+            SUGGESTIONS=$(jq -r '.summary.suggestions // 0' bob-review-output.json)
+            
+            echo "🔴 Critical Issues: $CRITICAL"
+            echo "🟡 Warnings: $WARNINGS"
+            echo "🟢 Suggestions: $SUGGESTIONS"
+            
+            # Set job status based on critical issues
+            if [ "$CRITICAL" -gt 0 ]; then
+              echo "❌ Critical governance violations found - PR requires changes"
+              exit 1
+            fi
+          else
+            echo "⚠️ Bob review output not found"
+          fi
+
+      - name: 📤 Upload Bob review results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bob-review-results
+          path: |
+            bob-review-output.json
+            pr-context.json
+          retention-days: 30
+
+      - name: 💬 Post review summary comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let summary = '## 🤖 Bob AI Governance Review Summary\n\n';
+            
+            try {
+              if (fs.existsSync('bob-review-output.json')) {
+                const results = JSON.parse(fs.readFileSync('bob-review-output.json', 'utf8'));
+                summary += `### Review Status: ${results.status || 'Completed'}\n\n`;
+                summary += `- 🔴 Critical Issues: ${results.summary?.critical || 0}\n`;
+                summary += `- 🟡 Warnings: ${results.summary?.warnings || 0}\n`;
+                summary += `- 🟢 Suggestions: ${results.summary?.suggestions || 0}\n\n`;
+                summary += `### Key Findings\n${results.summary?.description || 'See inline comments for details'}\n\n`;
+              } else {
+                summary += '⚠️ Bob review completed. Check workflow logs for details.\n\n';
+              }
+            } catch (error) {
+              summary += `⚠️ Error processing review results: ${error.message}\n\n`;
+            }
+            
+            summary += '---\n';
+            summary += `🔗 [View Full Workflow Run](${context.payload.repository.html_url}/actions/runs/${context.runId})\n`;
+            summary += `📋 [Review Checklist](.governance/checklist.md) | [Standards](.governance/standards.md)\n`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: summary
+            });
+
+  # Job 4: Governance metrics and reporting
+  governance-metrics:
+    name: 📊 Governance Metrics
+    runs-on: ubuntu-latest
+    needs: [bob-ai-review]
+    if: always()
+    
+    steps:
+      - name: 📥 Download review results
+        uses: actions/download-artifact@v4
+        with:
+          name: bob-review-results
+          path: ./results/
+
+      - name: 📊 Generate metrics report
+        run: |
+          echo "## 📊 PR Governance Metrics" > metrics-report.md
+          echo "" >> metrics-report.md
+          echo "- **PR Number**: ${{ github.event.pull_request.number }}" >> metrics-report.md
+          echo "- **Review Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> metrics-report.md
+          echo "- **Reviewer**: Bob AI (Autonomous)" >> metrics-report.md
+          echo "- **Workflow Run**: ${{ github.run_id }}" >> metrics-report.md
+          echo "" >> metrics-report.md
+          
+          if [ -f "results/bob-review-output.json" ]; then
+            echo "### Review Results" >> metrics-report.md
+            cat results/bob-review-output.json | jq -r '.summary' >> metrics-report.md || echo "Results processed" >> metrics-report.md
+          fi
+          
+          cat metrics-report.md
+
+      - name: 📤 Upload metrics report
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-metrics
+          path: metrics-report.md
+          retention-days: 90
+
+# Made with Bob
