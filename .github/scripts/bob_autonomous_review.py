@@ -1,114 +1,105 @@
 #!/usr/bin/env python3
 """
-Bob AI Autonomous PR Review using ngnetic-mcp GitHub Connector
-Connects directly to ngnetic-mcp to post review comments via MCP protocol
+Bob AI Autonomous PR Review
+Uses GitHub API directly for PR analysis and Groq for AI review
 """
 
 import os
 import sys
 import json
 import requests
+import base64
 from pathlib import Path
 
-def connect_to_ngnetic_mcp():
-    """Connect to ngnetic-mcp and get available tools"""
-    mcp_url = os.getenv("NGNETIC_MCP_URL")
-    bearer_token = os.getenv("NGNETIC_MCP_BEARER_TOKEN")
-    api_key = os.getenv("NGNETIC_MCP_API_KEY")
+def get_github_headers():
+    """Get GitHub API headers"""
+    github_token = os.getenv("GITHUB_TOKEN")
+    if not github_token:
+        raise ValueError("Missing GITHUB_TOKEN")
     
-    if not all([mcp_url, bearer_token, api_key]):
-        raise ValueError("Missing ngnetic-mcp credentials")
-    
-    headers = {
-        "Authorization": f"Bearer {bearer_token}",
-        "x-api-key": api_key,
-        "Content-Type": "application/json"
+    return {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
     }
+
+def get_pr_files(owner, repo, pr_number):
+    """Get PR files using GitHub API"""
+    print(f"📁 Fetching PR files from GitHub API...")
+    headers = get_github_headers()
     
-    # List available tools from ngnetic-mcp
-    print("🔗 Connecting to ngnetic-mcp...")
+    url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/files"
+    response = requests.get(url, headers=headers, timeout=30)
+    response.raise_for_status()
+    
+    files = response.json()
+    print(f"✅ Found {len(files)} changed files")
+    return files
+
+def get_file_content(owner, repo, path, ref):
+    """Get file content from GitHub"""
+    headers = get_github_headers()
+    
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
+    response = requests.get(url, headers=headers, timeout=30)
+    response.raise_for_status()
+    
+    content_data = response.json()
+    if content_data.get('encoding') == 'base64':
+        content = base64.b64decode(content_data['content']).decode('utf-8')
+        return content
+    return content_data.get('content', '')
+
+def post_pr_comment(owner, repo, pr_number, body):
+    """Post comment to PR using GitHub API"""
+    print(f"💬 Posting review comment to PR #{pr_number}...")
+    headers = get_github_headers()
+    
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
     response = requests.post(
-        f"{mcp_url}/tools/list",
+        url,
         headers=headers,
-        json={},
+        json={"body": body},
         timeout=30
     )
     response.raise_for_status()
     
-    tools = response.json()
-    print(f"✅ Connected! Available tools: {len(tools.get('tools', []))}")
-    return headers, mcp_url
+    comment = response.json()
+    print(f"✅ Comment posted! ID: {comment['id']}")
+    return comment
 
-def call_mcp_tool(headers, mcp_url, tool_name, arguments):
-    """Call a tool via ngnetic-mcp"""
-    print(f"🔧 Calling MCP tool: {tool_name}")
-    
-    response = requests.post(
-        f"{mcp_url}/tools/call",
-        headers=headers,
-        json={
-            "name": tool_name,
-            "arguments": arguments
-        },
-        timeout=60
-    )
-    response.raise_for_status()
-    return response.json()
-
-def autonomous_review_with_mcp():
-    """Perform autonomous review using ngnetic-mcp GitHub connector"""
+def autonomous_review_with_github_api():
+    """Perform autonomous review using GitHub API directly"""
     
     # Load PR context
     with open("pr-context.json") as f:
         pr_context = json.load(f)
     
-    # Load review prompt
-    with open("bob-review-prompt.md") as f:
-        review_prompt = f.read()
+    owner, repo = pr_context['repository'].split('/')
+    pr_number = pr_context['pr_number']
     
-    # Connect to ngnetic-mcp
-    headers, mcp_url = connect_to_ngnetic_mcp()
+    print(f"📊 Reviewing PR #{pr_number}: {pr_context['pr_title']}")
     
-    print(f"📊 Reviewing PR #{pr_context['pr_number']}: {pr_context['pr_title']}")
-    
-    # Step 1: Get PR files using GitHub connector via MCP
-    print("\n📁 Step 1: Fetching PR files via ngnetic-mcp GitHub connector...")
-    pr_files = call_mcp_tool(
-        headers, mcp_url,
-        "github_get_pull_request_files",
-        {
-            "owner": pr_context['repository'].split('/')[0],
-            "repo": pr_context['repository'].split('/')[1],
-            "pull_number": pr_context['pr_number']
-        }
-    )
-    
-    files_data = pr_files.get('content', [])
-    print(f"✅ Found {len(files_data)} changed files")
+    # Step 1: Get PR files using GitHub API
+    print("\n📁 Step 1: Fetching PR files from GitHub...")
+    pr_files = get_pr_files(owner, repo, pr_number)
     
     # Step 2: Get actual file contents for analysis
     print("\n📄 Step 2: Fetching file contents...")
     file_contents = []
-    for file_info in files_data[:10]:  # Limit to first 10 files
+    for file_info in pr_files[:10]:  # Limit to first 10 files
         filename = file_info.get('filename', '')
         if filename.endswith(('.ts', '.html', '.css', '.scss')):
             try:
-                content_result = call_mcp_tool(
-                    headers, mcp_url,
-                    "github_get_file_contents",
-                    {
-                        "owner": pr_context['repository'].split('/')[0],
-                        "repo": pr_context['repository'].split('/')[1],
-                        "path": filename,
-                        "ref": pr_context['head_branch']
-                    }
-                )
+                content = get_file_content(owner, repo, filename, pr_context['head_branch'])
                 file_contents.append({
                     "filename": filename,
-                    "content": content_result.get('content', ''),
-                    "patch": file_info.get('patch', '')
+                    "content": content,
+                    "patch": file_info.get('patch', ''),
+                    "additions": file_info.get('additions', 0),
+                    "deletions": file_info.get('deletions', 0)
                 })
-                print(f"  ✓ {filename}")
+                print(f"  ✓ {filename} (+{file_info.get('additions', 0)}/-{file_info.get('deletions', 0)})")
             except Exception as e:
                 print(f"  ⚠️ Could not fetch {filename}: {e}")
     
@@ -261,28 +252,19 @@ Respond in this JSON format:
 *Autonomous review by Bob AI using ngnetic-mcp GitHub connector + Groq Llama 3.3 70B*
 """
     
-    # Step 5: Post review comment via ngnetic-mcp GitHub connector
-    print("\n📤 Step 5: Posting review to GitHub via ngnetic-mcp...")
-    comment_result = call_mcp_tool(
-        headers, mcp_url,
-        "github_create_issue_comment",
-        {
-            "owner": pr_context['repository'].split('/')[0],
-            "repo": pr_context['repository'].split('/')[1],
-            "issue_number": pr_context['pr_number'],
-            "body": review_body
-        }
-    )
+    # Step 5: Post review comment via GitHub API
+    print("\n📤 Step 5: Posting review to GitHub...")
+    comment = post_pr_comment(owner, repo, pr_number, review_body)
     
-    comment_id = comment_result.get('content', {}).get('id', 'unknown')
-    comment_url = comment_result.get('content', {}).get('html_url', '')
+    comment_id = comment.get('id', 'unknown')
+    comment_url = comment.get('html_url', '')
     print(f"✅ Review posted! Comment ID: {comment_id}")
     print(f"🔗 {comment_url}")
     
     # Save results
     results = {
         "status": "completed",
-        "model": "groq-llama-3.3-70b + ngnetic-mcp",
+        "model": "groq-llama-3.3-70b + github-api",
         "files_analyzed": len(file_contents),
         "total_issues": len(issues),
         "summary": {
@@ -294,7 +276,7 @@ Respond in this JSON format:
         "issues": issues,
         "comment_id": comment_id,
         "comment_url": comment_url,
-        "mcp_used": True
+        "github_api_used": True
     }
     
     with open("bob-review-output.json", "w") as f:
@@ -307,7 +289,7 @@ Respond in this JSON format:
 
 if __name__ == "__main__":
     try:
-        critical_count = autonomous_review_with_mcp()
+        critical_count = autonomous_review_with_github_api()
         sys.exit(1 if critical_count > 0 else 0)
     except Exception as e:
         print(f"\n❌ Error: {e}")
