@@ -336,15 +336,15 @@ jobs:
           Begin your autonomous review now using the ngnetic-mcp tools.
           EOFPROMPT
           
-          echo "🤖 Executing Bob AI review using Claude API with ngnetic-mcp..."
+          echo "🤖 Executing Bob AI autonomous review via ngnetic-mcp..."
           
           # Make script executable
-          chmod +x .github/scripts/bob-review.py
+          chmod +x .github/scripts/bob_autonomous_review.py
           
-          # Execute Bob review script
-          python3 .github/scripts/bob-review.py
+          # Execute Bob autonomous review (uses ngnetic-mcp GitHub connector directly)
+          python3 .github/scripts/bob_autonomous_review.py
           
-          echo "✅ Bob review execution completed"
+          echo "✅ Bob autonomous review completed"
 
       - name: 📊 Process Bob Review Results
         if: always()
