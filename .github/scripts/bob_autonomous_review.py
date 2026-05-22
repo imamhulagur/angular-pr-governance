@@ -170,48 +170,37 @@ def autonomous_review_with_github_api():
         print("❌ GROQ_API_KEY not found!")
         return 0
     
-    # Build detailed analysis prompt with actual code
+    # Build analysis prompt - focus on patches to reduce payload size
     files_summary = "\n\n".join([
-        f"### File: {f['filename']}\n" +
-        (f"**Full Content:**\n```typescript\n{f['content'][:3000]}\n```\n" if f['content'] else "") +
-        f"**Changes (Diff):**\n```diff\n{f['patch'][:2000]}\n```"
+        f"### {f['filename']}\n```diff\n{f['patch'][:1200]}\n```"
         for f in file_contents
     ])
     
-    analysis_prompt = f"""You are an expert Angular code reviewer. Analyze this PR for governance violations.
+    analysis_prompt = f"""Analyze Angular PR for governance violations. Focus on DIFF.
 
-PR Title: {pr_context['pr_title']}
-Files Changed: {len(file_contents)}
+Files: {len(file_contents)}
 
 {files_summary}
 
-CRITICAL CHECKS:
-1. 🔴 RxJS Memory Leaks - Find unsubscribed observables (subscribe() without takeUntil/async pipe)
-2. 🔴 Direct fetch() - Should use Angular HttpClient instead
-3. 🔴 Missing ARIA labels - Buttons/inputs without accessibility attributes
-4. 🟡 Type safety - Usage of 'any' type
-5. 🟡 Error handling - Missing try-catch or error operators
+Find:
+1. RxJS leaks - subscribe() without cleanup
+2. fetch() - use HttpClient
+3. Missing ARIA
+4. 'any' type
+5. Missing ngOnDestroy
 
-For EACH issue found, provide:
-- exact filename
-- approximate line number
-- severity (critical/warning/suggestion)
-- code snippet showing the problem
-- fixed code snippet
-- explanation
-
-Respond in this JSON format:
+JSON:
 {{
   "issues": [
     {{
-      "file": "src/app/component.ts",
+      "file": "path.ts",
       "line": 25,
       "severity": "critical",
       "category": "RxJS Memory Leak",
-      "problem": "Observable subscription without cleanup",
-      "problem_code": "this.data$.subscribe(...)",
-      "fix_code": "this.data$.pipe(takeUntil(this.destroy$)).subscribe(...)",
-      "explanation": "Unsubscribed observables cause memory leaks"
+      "problem": "desc",
+      "problem_code": "bad",
+      "fix_code": "good",
+      "explanation": "why"
     }}
   ]
 }}"""
