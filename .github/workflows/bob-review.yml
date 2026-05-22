@@ -145,8 +145,16 @@ jobs:
           cache: 'npm'
 
       - name: 📦 Install Bob CLI
+        continue-on-error: true
         run: |
-          npm install -g @bob-ai/cli || npm install -g bob-cli || echo "Bob CLI installation method may vary"
+          echo "⚠️ Note: Bob CLI is a conceptual tool for this demo"
+          echo "In a real implementation, you would install the actual Bob CLI here"
+          echo "For this demo, we'll simulate the review process"
+          
+          # Attempt to install if available, but don't fail if not
+          npm install -g @bob-ai/cli 2>/dev/null || \
+          npm install -g bob-cli 2>/dev/null || \
+          echo "✅ Proceeding with simulated Bob review"
 
       - name: 🔐 Setup MCP Configuration
         env:
@@ -371,16 +379,56 @@ jobs:
           # Execute Bob with the review prompt
           echo "🤖 Invoking Bob AI for autonomous review..."
           
-          # Note: Actual Bob CLI invocation syntax may vary
-          # This is a placeholder for the actual Bob execution
-          bob review \
-            --config "${{ env.BOB_CONFIG_PATH }}" \
-            --pr-number "${{ github.event.pull_request.number }}" \
-            --repository "${{ github.repository }}" \
-            --prompt-file "bob-review-prompt.md" \
-            --context-file "pr-context.json" \
-            --github-token "${{ secrets.GITHUB_TOKEN }}" \
-            --output "bob-review-output.json" || echo "Bob review completed with findings"
+          # Check if bob command exists
+          if command -v bob &> /dev/null; then
+            echo "✅ Bob CLI found, executing review..."
+            bob review \
+              --config "${{ env.BOB_CONFIG_PATH }}" \
+              --pr-number "${{ github.event.pull_request.number }}" \
+              --repository "${{ github.repository }}" \
+              --prompt-file "bob-review-prompt.md" \
+              --context-file "pr-context.json" \
+              --github-token "${{ secrets.GITHUB_TOKEN }}" \
+              --output "bob-review-output.json" || echo "Bob review completed with findings"
+          else
+            echo "⚠️ Bob CLI not available - Creating simulated review output for demo"
+            # Create a simulated review output for demonstration purposes
+            cat > bob-review-output.json << 'EOFJSON'
+            {
+              "status": "completed",
+              "summary": {
+                "critical": 5,
+                "warnings": 8,
+                "suggestions": 12,
+                "description": "This is a simulated review for demonstration purposes. In a real implementation, Bob AI would analyze the code using MCP servers and provide detailed feedback."
+              },
+              "findings": [
+                {
+                  "severity": "critical",
+                  "category": "RxJS Memory Leaks",
+                  "message": "Unsubscribed observable detected in user-profile.component.ts",
+                  "file": "src/app/components/user-profile/user-profile.component.ts",
+                  "line": 25
+                },
+                {
+                  "severity": "critical",
+                  "category": "HTTP Usage",
+                  "message": "Direct fetch() usage detected instead of Angular HttpClient",
+                  "file": "src/app/components/data-table/data-table.component.ts",
+                  "line": 42
+                },
+                {
+                  "severity": "critical",
+                  "category": "Accessibility",
+                  "message": "Missing ARIA labels on interactive elements",
+                  "file": "src/app/components/modal/modal.component.ts",
+                  "line": 15
+                }
+              ]
+            }
+            EOFJSON
+            echo "✅ Simulated review output created"
+          fi
           
           echo "✅ Bob review execution completed"
 
