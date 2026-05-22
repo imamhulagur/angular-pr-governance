@@ -243,12 +243,12 @@ jobs:
       - name: 🤖 Execute Bob AI Governance Review
         id: bob-review
         env:
-          # ICA Model Configuration (Preferred)
-          USE_ICA_MODELS: ${{ secrets.USE_ICA_MODELS || 'false' }}
+          # ICA Model Configuration (Primary - Enterprise Governance)
+          USE_ICA_MODELS: ${{ secrets.USE_ICA_MODELS || 'true' }}
           ICA_MODEL_ENDPOINT: ${{ secrets.ICA_MODEL_ENDPOINT }}
           ICA_MODEL_NAME: ${{ secrets.ICA_MODEL_NAME || 'claude-3-5-sonnet' }}
-          ICA_API_KEY: ${{ secrets.ICA_API_KEY }}
-          # Fallback to direct Claude API
+          ICA_API_KEY: ${{ secrets.ICA_API_KEY || secrets.NGNETIC_MCP_API_KEY }}
+          # Fallback to direct Claude API (for testing only)
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # GitHub context
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
