@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """
 Bob AI PR Governance Review Script
-Uses Claude API with MCP servers to perform autonomous PR reviews
+Uses Claude API (direct or via ICA) with MCP servers to perform autonomous PR reviews
 """
 
 import os
 import sys
 import json
-import anthropic
+import requests
 from pathlib import Path
+
+# Try to import anthropic, but make it optional for ICA usage
+try:
+    import anthropic
+    HAS_ANTHROPIC = True
+except ImportError:
+    HAS_ANTHROPIC = False
+    print("⚠️ Anthropic SDK not available, will use ICA models if configured")
 
 def load_mcp_config():
     """Load MCP configuration"""
@@ -37,13 +45,39 @@ def load_review_prompt():
     with open(prompt_path) as f:
         return f.read()
 
+def call_ica_model(prompt, system_prompt, mcp_config):
+    """Call ICA model endpoint (when configured)"""
+    ica_endpoint = os.getenv("ICA_MODEL_ENDPOINT")
+    ica_api_key = os.getenv("ICA_API_KEY") or os.getenv("NGNETIC_MCP_API_KEY")
+    
+    if not ica_endpoint:
+        raise ValueError("ICA_MODEL_ENDPOINT not configured")
+    
+    print(f"🔗 Calling ICA model at {ica_endpoint}")
+    
+    # Prepare request (adjust format based on ICA API)
+    headers = {
+        "Authorization": f"Bearer {ica_api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": os.getenv("ICA_MODEL_NAME", "claude-3-5-sonnet"),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 8000,
+        "mcp_config": mcp_config
+    }
+    
+    response = requests.post(ica_endpoint, headers=headers, json=payload, timeout=300)
+    response.raise_for_status()
+    
+    return response.json()
+
 def perform_bob_review():
     """Perform Bob AI governance review using Claude with MCP"""
-    
-    # Get Claude API key
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
     
     # Load configurations
     print("📋 Loading configurations...")
@@ -51,9 +85,28 @@ def perform_bob_review():
     pr_context = load_pr_context()
     review_prompt = load_review_prompt()
     
-    # Initialize Claude client
-    print("🤖 Initializing Claude API client...")
-    client = anthropic.Anthropic(api_key=api_key)
+    # Check if using ICA or direct Claude API
+    use_ica = os.getenv("USE_ICA_MODELS", "false").lower() == "true"
+    
+    if use_ica:
+        print("🔗 Using ICA models for Bob AI...")
+        ica_endpoint = os.getenv("ICA_MODEL_ENDPOINT")
+        if not ica_endpoint:
+            print("⚠️ ICA_MODEL_ENDPOINT not set, falling back to direct Claude API")
+            use_ica = False
+    
+    if not use_ica:
+        # Get Claude API key for direct access
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY environment variable not set (required when not using ICA)")
+        
+        if not HAS_ANTHROPIC:
+            raise ImportError("anthropic package not installed. Run: pip install anthropic")
+        
+        # Initialize Claude client
+        print("🤖 Initializing Claude API client...")
+        client = anthropic.Anthropic(api_key=api_key)
     
     # Prepare the system prompt for Bob
     system_prompt = """You are Bob, a highly skilled software engineer and Angular expert conducting an autonomous PR governance review.
@@ -95,47 +148,68 @@ Begin your autonomous review now using the MCP tools."""
     print(f"📊 Reviewing PR #{pr_context['pr_number']}: {pr_context['pr_title']}")
     
     try:
-        # Create message with MCP support
-        response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=8000,
-            system=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": user_message
-                }
-            ],
-            # Enable MCP tools
-            tools=[
-                {
-                    "type": "mcp",
-                    "mcp_servers": mcp_config["mcpServers"]
-                }
-            ]
-        )
+        if use_ica:
+            # Use ICA model endpoint
+            response_data = call_ica_model(user_message, system_prompt, mcp_config)
+            
+            # Extract review results from ICA response
+            review_output = {
+                "status": "completed",
+                "model": response_data.get("model", "ica-model"),
+                "usage": response_data.get("usage", {}),
+                "summary": {
+                    "critical": 0,
+                    "warnings": 0,
+                    "suggestions": 0,
+                    "description": "Bob AI has posted review comments directly to the PR using MCP via ICA"
+                },
+                "response": response_data.get("content", "")
+            }
+            
+            response_text = review_output["response"]
+        else:
+            # Use direct Claude API
+            response = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=8000,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": user_message
+                    }
+                ],
+                # Enable MCP tools
+                tools=[
+                    {
+                        "type": "mcp",
+                        "mcp_servers": mcp_config["mcpServers"]
+                    }
+                ]
+            )
+            
+            # Extract review results
+            review_output = {
+                "status": "completed",
+                "model": response.model,
+                "usage": {
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens
+                },
+                "summary": {
+                    "critical": 0,
+                    "warnings": 0,
+                    "suggestions": 0,
+                    "description": "Bob AI has posted review comments directly to the PR using MCP"
+                },
+                "response": response.content[0].text if response.content else ""
+            }
+            
+            response_text = response.content[0].text if response.content else ""
         
         print("✅ Bob review completed successfully")
         
-        # Extract review results
-        review_output = {
-            "status": "completed",
-            "model": response.model,
-            "usage": {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens
-            },
-            "summary": {
-                "critical": 0,
-                "warnings": 0,
-                "suggestions": 0,
-                "description": "Bob AI has posted review comments directly to the PR using MCP"
-            },
-            "response": response.content[0].text if response.content else ""
-        }
-        
         # Parse response to count issues
-        response_text = response.content[0].text if response.content else ""
         review_output["summary"]["critical"] = response_text.count("🔴")
         review_output["summary"]["warnings"] = response_text.count("🟡")
         review_output["summary"]["suggestions"] = response_text.count("🟢")

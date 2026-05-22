@@ -199,6 +199,7 @@ jobs:
 
       - name: 📋 Download lint report
         if: needs.angular-validation.result == 'success' || needs.angular-validation.result == 'failure'
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: lint-report
@@ -227,7 +228,14 @@ jobs:
       - name: 🤖 Execute Bob AI Governance Review
         id: bob-review
         env:
+          # ICA Model Configuration (Preferred)
+          USE_ICA_MODELS: ${{ secrets.USE_ICA_MODELS || 'false' }}
+          ICA_MODEL_ENDPOINT: ${{ secrets.ICA_MODEL_ENDPOINT }}
+          ICA_MODEL_NAME: ${{ secrets.ICA_MODEL_NAME || 'claude-3-5-sonnet' }}
+          ICA_API_KEY: ${{ secrets.ICA_API_KEY }}
+          # Fallback to direct Claude API
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # GitHub context
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
