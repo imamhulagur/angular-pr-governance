@@ -144,22 +144,20 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: 📦 Install Bob CLI
-        continue-on-error: true
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install Bob AI Dependencies
         run: |
-          echo "⚠️ Note: Bob CLI is a conceptual tool for this demo"
-          echo "In a real implementation, you would install the actual Bob CLI here"
-          echo "For this demo, we'll simulate the review process"
-          
-          # Attempt to install if available, but don't fail if not
-          npm install -g @bob-ai/cli 2>/dev/null || \
-          npm install -g bob-cli 2>/dev/null || \
-          echo "✅ Proceeding with simulated Bob review"
+          echo "📦 Installing dependencies for Bob AI integration..."
+          pip install anthropic requests
+          echo "✅ Dependencies installed"
 
       - name: 🔐 Setup MCP Configuration
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_HOST: ${{ github.server_url }}
           NGNETIC_MCP_URL: ${{ secrets.NGNETIC_MCP_URL }}
           NGNETIC_MCP_BEARER_TOKEN: ${{ secrets.NGNETIC_MCP_BEARER_TOKEN }}
           NGNETIC_MCP_API_KEY: ${{ secrets.NGNETIC_MCP_API_KEY }}
@@ -167,35 +165,34 @@ jobs:
           # Create .bob directory if it doesn't exist
           mkdir -p .bob
           
-          # Create MCP configuration using environment variables
-          echo "📋 Creating MCP configuration..."
+          # Create MCP configuration for ngnetic-mcp with GitHub connector
+          echo "📋 Creating MCP configuration for ngnetic-mcp..."
           cat > .bob/mcp.json << 'EOFCONFIG'
           {
             "mcpServers": {
-              "github": {
-                "command": "npx",
-                "args": [
-                  "-y",
-                  "@modelcontextprotocol/server-github"
-                ],
-                "env": {
-                  "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}",
-                  "GITHUB_HOST": "${GITHUB_HOST}"
-                }
+              "ngnetic-mcp": {
+                "type": "streamable-http",
+                "url": "${NGNETIC_MCP_URL}",
+                "headers": {
+                  "Authorization": "Bearer ${NGNETIC_MCP_BEARER_TOKEN}",
+                  "x-api-key": "${NGNETIC_MCP_API_KEY}"
+                },
+                "disabled": false
               }
             }
           }
           EOFCONFIG
           
           # Replace environment variables in the created file
-          sed -i "s/\${GITHUB_TOKEN}/${GITHUB_TOKEN}/g" .bob/mcp.json
-          sed -i "s/\${GITHUB_HOST}/${GITHUB_HOST}/g" .bob/mcp.json
+          sed -i "s|\${NGNETIC_MCP_URL}|${NGNETIC_MCP_URL}|g" .bob/mcp.json
+          sed -i "s|\${NGNETIC_MCP_BEARER_TOKEN}|${NGNETIC_MCP_BEARER_TOKEN}|g" .bob/mcp.json
+          sed -i "s|\${NGNETIC_MCP_API_KEY}|${NGNETIC_MCP_API_KEY}|g" .bob/mcp.json
           
           # Verify the configuration was created
           if [ -f "${{ env.BOB_CONFIG_PATH }}" ]; then
             echo "✅ MCP configuration verified at ${{ env.BOB_CONFIG_PATH }}"
             echo "📄 Configuration contents (secrets masked):"
-            cat ${{ env.BOB_CONFIG_PATH }} | sed 's/"GITHUB_PERSONAL_ACCESS_TOKEN": ".*"/"GITHUB_PERSONAL_ACCESS_TOKEN": "***"/g'
+            cat ${{ env.BOB_CONFIG_PATH }} | sed 's/"Authorization": "Bearer .*"/"Authorization": "Bearer ***"/g' | sed 's/"x-api-key": ".*"/"x-api-key": "***"/g'
           else
             echo "❌ Error: Failed to create MCP configuration"
             exit 1
@@ -231,204 +228,98 @@ jobs:
       - name: 🤖 Execute Bob AI Governance Review
         id: bob-review
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_PERSONAL_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_HOST: ${{ github.server_url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
-          BOB_MCP_CONFIG: ${{ env.BOB_CONFIG_PATH }}
         run: |
           # Create Bob review prompt
-          cat > bob-review-prompt.md << 'EOF'
+          cat > bob-review-prompt.md << 'EOFPROMPT'
           # Angular PR Governance Review Task
           
-          You are Bob, an expert Angular architect and DevOps engineer conducting an autonomous PR governance review.
-          
           ## Your Mission
-          Perform a comprehensive governance review of this Pull Request using your configured MCP servers.
-          
-          ## PR Context
-          - PR Number: ${{ github.event.pull_request.number }}
-          - Title: ${{ github.event.pull_request.title }}
-          - Author: ${{ github.event.pull_request.user.login }}
-          - Repository: ${{ github.repository }}
+          Perform a comprehensive governance review of this Pull Request using the ngnetic-mcp server with GitHub connector.
           
           ## Review Checklist
           
-          ### 1. Architecture & Design (via ngnetic-mcp)
-          - [ ] Retrieve Angular enterprise architecture standards from ngnetic-mcp
-          - [ ] Validate component structure and module organization
-          - [ ] Check for proper separation of concerns (smart/dumb components)
-          - [ ] Verify dependency injection patterns
-          - [ ] Validate state management approach
+          ### 1. Architecture & Design
+          - Retrieve Angular enterprise architecture standards from ngnetic-mcp
+          - Validate component structure and module organization
+          - Check for proper separation of concerns (smart/dumb components)
+          - Verify dependency injection patterns
           
           ### 2. Code Quality Analysis
-          - [ ] Review TypeScript type safety (no `any` types)
-          - [ ] Check for proper error handling
-          - [ ] Validate naming conventions (kebab-case, camelCase)
-          - [ ] Ensure code follows Angular Style Guide
-          - [ ] Check for code duplication
+          - Review TypeScript type safety (no `any` types)
+          - Check for proper error handling
+          - Validate naming conventions
+          - Ensure code follows Angular Style Guide
           
-          ### 3. RxJS & Memory Leak Detection
-          - [ ] **CRITICAL**: Detect unsubscribed observables
-          - [ ] Verify proper use of `takeUntil`, `take`, or `async pipe`
-          - [ ] Check for memory leaks in components
-          - [ ] Validate subscription cleanup in `ngOnDestroy`
-          - [ ] Flag any manual subscriptions without cleanup
+          ### 3. RxJS & Memory Leak Detection ⚠️ CRITICAL
+          - Detect unsubscribed observables
+          - Verify proper use of `takeUntil`, `take`, or `async pipe`
+          - Validate subscription cleanup in `ngOnDestroy`
           
-          ### 4. HTTP & API Usage
-          - [ ] **CRITICAL**: Detect direct `fetch()` usage (should use HttpClient)
-          - [ ] Verify proper use of Angular HttpClient
-          - [ ] Check for proper error handling in HTTP calls
-          - [ ] Validate API endpoint patterns
-          - [ ] Ensure proper use of interceptors
+          ### 4. HTTP & API Usage ⚠️ CRITICAL
+          - Detect direct `fetch()` usage (should use HttpClient)
+          - Verify proper use of Angular HttpClient
+          - Check for proper error handling in HTTP calls
           
-          ### 5. Accessibility (a11y) Compliance
-          - [ ] **CRITICAL**: Check for missing ARIA labels
-          - [ ] Verify semantic HTML usage
-          - [ ] Validate keyboard navigation support
-          - [ ] Check color contrast ratios
-          - [ ] Ensure form labels are properly associated
-          - [ ] Verify focus management
+          ### 5. Accessibility (a11y) Compliance ⚠️ CRITICAL
+          - Check for missing ARIA labels
+          - Verify semantic HTML usage
+          - Validate keyboard navigation support
+          - Ensure form labels are properly associated
           
           ### 6. Performance
-          - [ ] Check for OnPush change detection usage
-          - [ ] Verify trackBy functions in *ngFor
-          - [ ] Validate lazy loading implementation
-          - [ ] Check bundle size impact
-          - [ ] Review for unnecessary re-renders
+          - Check for OnPush change detection usage
+          - Verify trackBy functions in *ngFor
+          - Validate lazy loading implementation
           
           ### 7. Security
-          - [ ] Check for XSS vulnerabilities
-          - [ ] Validate input sanitization
-          - [ ] Verify no hardcoded secrets/tokens
-          - [ ] Check for proper authentication/authorization
+          - Check for XSS vulnerabilities
+          - Validate input sanitization
+          - Verify no hardcoded secrets/tokens
           
           ### 8. Testing
-          - [ ] Verify unit tests exist for new components/services
-          - [ ] Check test coverage meets threshold (80%+)
-          - [ ] Validate test quality and assertions
+          - Verify unit tests exist for new components/services
+          - Check test coverage meets threshold (80%+)
           
-          ## Actions to Take
+          ## Actions Required
           
-          1. **Use GitHub MCP** to:
+          1. Use ngnetic-mcp GitHub connector to:
              - Fetch PR details and changed files
              - Analyze file diffs
-             - Post inline review comments on specific lines
-             - Create review summary comment
+             - Post inline review comments on specific lines with issues
+             - Create a comprehensive review summary comment
           
-          2. **Use ngnetic-mcp** to:
-             - Retrieve enterprise Angular governance rules
-             - Validate against company standards
-             - Get approved patterns and anti-patterns
+          2. For each issue found, post a comment with:
+             - Severity: 🔴 Critical | 🟡 Warning | 🟢 Suggestion
+             - Clear description of the problem
+             - Code snippet showing the issue
+             - Suggested fix with code example
+             - Explanation of why it matters
           
-          3. **Generate Review Output**:
-             - Post inline comments for each violation found
-             - Include severity level: 🔴 Critical | 🟡 Warning | 🟢 Suggestion
-             - Provide code snippets showing the issue
-             - Suggest specific fixes with code examples
-             - Generate overall review summary
-          
-          4. **Critical Violations** (must fix before merge):
+          3. Critical violations that MUST be fixed:
              - RxJS memory leaks (unsubscribed observables)
              - Direct fetch() usage instead of HttpClient
              - Missing accessibility attributes (ARIA, alt text)
              - Security vulnerabilities
-             - Breaking architecture patterns
           
-          5. **Review Decision**:
-             - If critical violations found: REQUEST CHANGES
-             - If only warnings/suggestions: COMMENT
-             - If all checks pass: APPROVE (optional)
+          4. Post a final summary comment with:
+             - Total issues by severity
+             - Critical violations blocking merge
+             - Overall recommendation
           
-          ## Output Format
+          Begin your autonomous review now using the ngnetic-mcp tools.
+          EOFPROMPT
           
-          For each issue found, post a review comment with:
-          ```
-          🔴 **Critical** | 🟡 **Warning** | 🟢 **Suggestion**
+          echo "🤖 Executing Bob AI review using Claude API with ngnetic-mcp..."
           
-          **Issue**: [Brief description]
+          # Make script executable
+          chmod +x .github/scripts/bob-review.py
           
-          **Location**: [File:Line]
-          
-          **Problem**:
-          [Detailed explanation]
-          
-          **Fix**:
-          ```typescript
-          // Suggested code fix
-          ```
-          
-          **Why**: [Explanation of why this matters]
-          ```
-          
-          ## Final Summary Comment
-          
-          Post a comprehensive review summary including:
-          - Total issues found (by severity)
-          - Critical violations that block merge
-          - Warnings to address
-          - Suggestions for improvement
-          - Overall recommendation (Approve/Request Changes/Comment)
-          
-          ## Begin Review
-          
-          Start your autonomous governance review now. Use your MCP tools to analyze the PR and post your findings.
-          EOF
-          
-          # Execute Bob with the review prompt
-          echo "🤖 Invoking Bob AI for autonomous review..."
-          
-          # Check if bob command exists
-          if command -v bob &> /dev/null; then
-            echo "✅ Bob CLI found, executing review..."
-            bob review \
-              --config "${{ env.BOB_CONFIG_PATH }}" \
-              --pr-number "${{ github.event.pull_request.number }}" \
-              --repository "${{ github.repository }}" \
-              --prompt-file "bob-review-prompt.md" \
-              --context-file "pr-context.json" \
-              --github-token "${{ secrets.GITHUB_TOKEN }}" \
-              --output "bob-review-output.json" || echo "Bob review completed with findings"
-          else
-            echo "⚠️ Bob CLI not available - Creating simulated review output for demo"
-            # Create a simulated review output for demonstration purposes
-            cat > bob-review-output.json << 'EOFJSON'
-            {
-              "status": "completed",
-              "summary": {
-                "critical": 5,
-                "warnings": 8,
-                "suggestions": 12,
-                "description": "This is a simulated review for demonstration purposes. In a real implementation, Bob AI would analyze the code using MCP servers and provide detailed feedback."
-              },
-              "findings": [
-                {
-                  "severity": "critical",
-                  "category": "RxJS Memory Leaks",
-                  "message": "Unsubscribed observable detected in user-profile.component.ts",
-                  "file": "src/app/components/user-profile/user-profile.component.ts",
-                  "line": 25
-                },
-                {
-                  "severity": "critical",
-                  "category": "HTTP Usage",
-                  "message": "Direct fetch() usage detected instead of Angular HttpClient",
-                  "file": "src/app/components/data-table/data-table.component.ts",
-                  "line": 42
-                },
-                {
-                  "severity": "critical",
-                  "category": "Accessibility",
-                  "message": "Missing ARIA labels on interactive elements",
-                  "file": "src/app/components/modal/modal.component.ts",
-                  "line": 15
-                }
-              ]
-            }
-            EOFJSON
-            echo "✅ Simulated review output created"
-          fi
+          # Execute Bob review script
+          python3 .github/scripts/bob-review.py
           
           echo "✅ Bob review execution completed"
 
