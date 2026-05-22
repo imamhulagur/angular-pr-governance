@@ -243,6 +243,10 @@ jobs:
       - name: 🤖 Execute Bob AI Governance Review
         id: bob-review
         env:
+          # Ngnetic MCP Configuration (for GitHub connector)
+          NGNETIC_MCP_URL: ${{ secrets.NGNETIC_MCP_URL }}
+          NGNETIC_MCP_BEARER_TOKEN: ${{ secrets.NGNETIC_MCP_BEARER_TOKEN }}
+          NGNETIC_MCP_API_KEY: ${{ secrets.NGNETIC_MCP_API_KEY }}
           # ICA Model Configuration (Primary - Enterprise Governance)
           USE_ICA_MODELS: ${{ secrets.USE_ICA_MODELS || 'true' }}
           ICA_MODEL_ENDPOINT: ${{ secrets.ICA_MODEL_ENDPOINT }}
