@@ -151,6 +151,7 @@ jobs:
       - name: 🔐 Setup MCP Configuration
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_HOST: ${{ github.server_url }}
           NGNETIC_MCP_URL: ${{ secrets.NGNETIC_MCP_URL }}
           NGNETIC_MCP_BEARER_TOKEN: ${{ secrets.NGNETIC_MCP_BEARER_TOKEN }}
           NGNETIC_MCP_API_KEY: ${{ secrets.NGNETIC_MCP_API_KEY }}
@@ -158,15 +159,9 @@ jobs:
           # Create .bob directory if it doesn't exist
           mkdir -p .bob
           
-          # Create MCP configuration from template
-          if [ -f ".bob/mcp.json.example" ]; then
-            echo "📋 Creating MCP configuration from template..."
-            cp .bob/mcp.json.example .bob/mcp.json
-            
-            # Replace environment variables in the config
-            # Note: In a real scenario, you'd use proper secret management
-            # For demo purposes, we'll create a minimal working config
-            cat > .bob/mcp.json << 'EOF'
+          # Create MCP configuration using environment variables
+          echo "📋 Creating MCP configuration..."
+          cat > .bob/mcp.json << EOF
 {
   "mcpServers": {
     "github": {
@@ -176,32 +171,13 @@ jobs:
         "@modelcontextprotocol/server-github"
       ],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
-        "GITHUB_HOST": "${{ github.server_url }}"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}",
+        "GITHUB_HOST": "${GITHUB_HOST}"
       }
     }
   }
 }
 EOF
-            echo "✅ MCP configuration created"
-          else
-            echo "⚠️ No MCP template found, creating minimal config..."
-            cat > .bob/mcp.json << 'EOF'
-{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
-        "GITHUB_HOST": "${{ github.server_url }}"
-      }
-    }
-  }
-}
-EOF
-            echo "✅ Minimal MCP configuration created"
-          fi
           
           # Verify the configuration was created
           if [ -f "${{ env.BOB_CONFIG_PATH }}" ]; then
