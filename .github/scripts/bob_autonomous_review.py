@@ -41,14 +41,24 @@ def get_file_content(owner, repo, path, ref):
     headers = get_github_headers()
     
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
-    response = requests.get(url, headers=headers, timeout=30)
-    response.raise_for_status()
+    print(f"      Fetching: {url}")
     
-    content_data = response.json()
-    if content_data.get('encoding') == 'base64':
-        content = base64.b64decode(content_data['content']).decode('utf-8')
-        return content
-    return content_data.get('content', '')
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        content_data = response.json()
+        if content_data.get('encoding') == 'base64':
+            content = base64.b64decode(content_data['content']).decode('utf-8')
+            print(f"      ✓ Got {len(content)} characters")
+            return content
+        return content_data.get('content', '')
+    except requests.exceptions.HTTPError as e:
+        print(f"      ✗ HTTP Error {e.response.status_code}: {e.response.text[:200]}")
+        raise
+    except Exception as e:
+        print(f"      ✗ Error: {e}")
+        raise
 
 def post_pr_comment(owner, repo, pr_number, body):
     """Post comment to PR using GitHub API"""
@@ -97,7 +107,7 @@ def autonomous_review_with_github_api():
     commit_sha = pr_context.get('commit_sha', pr_context.get('head_branch'))
     print(f"   Using ref: {commit_sha}")
     
-    for file_info in pr_files[:10]:  # Limit to first 10 files
+    for file_info in pr_files[:20]:  # Analyze up to 20 files
         filename = file_info.get('filename', '')
         file_status = file_info.get('status', '')
         
@@ -105,8 +115,14 @@ def autonomous_review_with_github_api():
         if file_status == 'removed':
             print(f"  ⊘ {filename} (deleted)")
             continue
+        
+        # Skip non-code files
+        if not filename.endswith(('.ts', '.html', '.css', '.scss')):
+            print(f"  ⊘ {filename} (not a code file)")
+            continue
             
-        if filename.endswith(('.ts', '.html', '.css', '.scss', '.json')):
+        # Now fetch the file
+        if True:  # Always try to fetch code files
             try:
                 print(f"  → Fetching {filename}...")
                 content = get_file_content(owner, repo, filename, commit_sha)
