@@ -246,10 +246,11 @@ jobs:
           # ICA Model Configuration (Primary - Enterprise Governance)
           USE_ICA_MODELS: ${{ secrets.USE_ICA_MODELS || 'true' }}
           ICA_MODEL_ENDPOINT: ${{ secrets.ICA_MODEL_ENDPOINT }}
-          ICA_MODEL_NAME: ${{ secrets.ICA_MODEL_NAME || 'claude-3-5-sonnet' }}
+          ICA_MODEL_NAME: ${{ secrets.ICA_MODEL_NAME || 'llama-3.3-70b-versatile' }}
           ICA_API_KEY: ${{ secrets.ICA_API_KEY || secrets.NGNETIC_MCP_API_KEY }}
-          # Fallback to direct Claude API (for testing only)
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Fallback to Groq API (fast and cost-effective)
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL_NAME: ${{ secrets.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile' }}
           # GitHub context
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

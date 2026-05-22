@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bob AI PR Governance Review Script
-Uses Claude API (direct or via ICA) with MCP servers to perform autonomous PR reviews
+Uses ICA models (primary) or Groq (fallback) with MCP servers for autonomous PR reviews
 """
 
 import os
@@ -9,14 +9,6 @@ import sys
 import json
 import requests
 from pathlib import Path
-
-# Try to import anthropic, but make it optional for ICA usage
-try:
-    import anthropic
-    HAS_ANTHROPIC = True
-except ImportError:
-    HAS_ANTHROPIC = False
-    print("⚠️ Anthropic SDK not available, will use ICA models if configured")
 
 def load_mcp_config():
     """Load MCP configuration"""
@@ -62,7 +54,7 @@ def call_ica_model(prompt, system_prompt, mcp_config):
     }
     
     payload = {
-        "model": os.getenv("ICA_MODEL_NAME", "claude-3-5-sonnet"),
+        "model": os.getenv("ICA_MODEL_NAME", "llama-3.3-70b-versatile"),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
@@ -72,6 +64,40 @@ def call_ica_model(prompt, system_prompt, mcp_config):
     }
     
     response = requests.post(ica_endpoint, headers=headers, json=payload, timeout=300)
+    response.raise_for_status()
+    
+    return response.json()
+
+def call_groq_model(prompt, system_prompt):
+    """Call Groq API as fallback (fast and cost-effective)"""
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    
+    if not groq_api_key:
+        raise ValueError("GROQ_API_KEY not configured")
+    
+    print("🚀 Using Groq API (fast inference)...")
+    
+    headers = {
+        "Authorization": f"Bearer {groq_api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": os.getenv("GROQ_MODEL_NAME", "llama-3.3-70b-versatile"),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 8000,
+        "temperature": 0.1
+    }
+    
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=300
+    )
     response.raise_for_status()
     
     return response.json()
@@ -87,26 +113,24 @@ def perform_bob_review():
     
     # Check if using ICA or direct Claude API
     use_ica = os.getenv("USE_ICA_MODELS", "false").lower() == "true"
+    use_groq = False
     
     if use_ica:
         print("🔗 Using ICA models for Bob AI...")
         ica_endpoint = os.getenv("ICA_MODEL_ENDPOINT")
         if not ica_endpoint:
-            print("⚠️ ICA_MODEL_ENDPOINT not set, falling back to direct Claude API")
+            print("⚠️ ICA_MODEL_ENDPOINT not set, falling back to Groq API")
             use_ica = False
+            use_groq = True
     
-    if not use_ica:
-        # Get Claude API key for direct access
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable not set (required when not using ICA)")
-        
-        if not HAS_ANTHROPIC:
-            raise ImportError("anthropic package not installed. Run: pip install anthropic")
-        
-        # Initialize Claude client
-        print("🤖 Initializing Claude API client...")
-        client = anthropic.Anthropic(api_key=api_key)
+    if not use_ica and not use_groq:
+        # Check if Groq is available as fallback
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if groq_api_key:
+            print("🚀 Using Groq API as fallback (fast and cost-effective)")
+            use_groq = True
+        else:
+            raise ValueError("Neither ICA_MODEL_ENDPOINT nor GROQ_API_KEY configured. Please set up ICA models or add GROQ_API_KEY for fallback.")
     
     # Prepare the system prompt for Bob
     system_prompt = """You are Bob, a highly skilled software engineer and Angular expert conducting an autonomous PR governance review.
@@ -163,49 +187,31 @@ Begin your autonomous review now using the MCP tools."""
                     "suggestions": 0,
                     "description": "Bob AI has posted review comments directly to the PR using MCP via ICA"
                 },
-                "response": response_data.get("content", "")
+                "response": response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
             }
             
             response_text = review_output["response"]
-        else:
-            # Use direct Claude API
-            response = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=8000,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": user_message
-                    }
-                ],
-                # Enable MCP tools
-                tools=[
-                    {
-                        "type": "mcp",
-                        "mcp_servers": mcp_config["mcpServers"]
-                    }
-                ]
-            )
+        elif use_groq:
+            # Use Groq API as fallback
+            response_data = call_groq_model(user_message, system_prompt)
             
-            # Extract review results
+            # Extract review results from Groq response
             review_output = {
                 "status": "completed",
-                "model": response.model,
-                "usage": {
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens
-                },
+                "model": response_data.get("model", "groq-llama"),
+                "usage": response_data.get("usage", {}),
                 "summary": {
                     "critical": 0,
                     "warnings": 0,
                     "suggestions": 0,
-                    "description": "Bob AI has posted review comments directly to the PR using MCP"
+                    "description": "Bob AI has posted review comments using Groq API (fallback)"
                 },
-                "response": response.content[0].text if response.content else ""
+                "response": response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
             }
             
-            response_text = response.content[0].text if response.content else ""
+            response_text = review_output["response"]
+        else:
+            raise ValueError("No model configuration available")
         
         print("✅ Bob review completed successfully")
         

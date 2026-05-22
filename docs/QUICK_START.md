@@ -1,14 +1,12 @@
 # Quick Start Guide - Bob AI PR Governance
 
-Follow these steps to get Bob AI reviewing your PRs using ICA models!
+Follow these steps to get Bob AI reviewing your PRs!
 
 ## Step 1: Add GitHub Secrets
 
 Go to your repository: **Settings → Secrets and variables → Actions → New repository secret**
 
-Add these secrets:
-
-### Required Secrets (ICA Models - Recommended)
+### Option A: ICA Models (Recommended for Enterprise)
 
 ```bash
 # Ngnetic MCP Configuration (includes GitHub connector)
@@ -18,10 +16,28 @@ NGNETIC_MCP_API_KEY=your_api_key_here
 
 # ICA Model Configuration (Bob will use IBM-hosted models)
 ICA_MODEL_ENDPOINT=https://your-ica-endpoint/v1/chat/completions
-ICA_MODEL_NAME=claude-3-5-sonnet
+ICA_MODEL_NAME=llama-3.3-70b-versatile
 ```
 
-**Note**: `ICA_API_KEY` will automatically use `NGNETIC_MCP_API_KEY` if not separately configured.
+### Option B: Groq API (Fast & Free Fallback)
+
+If ICA is not yet configured, use Groq for testing:
+
+```bash
+# Ngnetic MCP Configuration (required)
+NGNETIC_MCP_URL=https://servicesessentials.ibm.com/...
+NGNETIC_MCP_BEARER_TOKEN=your_token
+NGNETIC_MCP_API_KEY=your_key
+
+# Groq API (get free key from https://console.groq.com)
+GROQ_API_KEY=gsk_xxxxxxxxxxxxx
+GROQ_MODEL_NAME=llama-3.3-70b-versatile
+```
+
+**Groq Benefits:**
+- ⚡ Ultra-fast inference (10x faster than others)
+- 💰 Free tier available
+- 🚀 Great for testing before ICA setup
 
 ### How to Get Each Secret
 
@@ -56,8 +72,7 @@ After adding secrets, verify they're set:
    - ✅ NGNETIC_MCP_URL
    - ✅ NGNETIC_MCP_BEARER_TOKEN
    - ✅ NGNETIC_MCP_API_KEY
-   - ✅ ICA_MODEL_ENDPOINT
-   - ✅ ICA_MODEL_NAME (optional, defaults to claude-3-5-sonnet)
+   - ✅ ICA_MODEL_ENDPOINT (for ICA) OR GROQ_API_KEY (for Groq)
 
 ## Step 3: Create a Test PR
 
@@ -114,10 +129,10 @@ You should see:
 
 ## Troubleshooting
 
-### "ICA_MODEL_ENDPOINT not configured" or "ANTHROPIC_API_KEY not set"
+### "Neither ICA_MODEL_ENDPOINT nor GROQ_API_KEY configured"
 - **Primary**: Get ICA_MODEL_ENDPOINT from your IBM ICA administrator
-- **Fallback**: Add ANTHROPIC_API_KEY for testing (starts with `sk-ant-`)
-- Bob prioritizes ICA models for enterprise governance
+- **Quick Start**: Get free GROQ_API_KEY from https://console.groq.com
+- Bob prioritizes ICA models, falls back to Groq if ICA not available
 
 ### "MCP configuration not found"
 - Check NGNETIC_MCP_URL is correct
@@ -137,9 +152,9 @@ You should see:
 ## Cost Estimate
 
 - **ICA Models**: Centralized IBM billing, check with your ICA account
+- **Groq API**: Free tier available (14,400 requests/day), then $0.05-$0.10 per 1M tokens
 - **ngnetic-mcp**: Included in IBM ICA subscription
 - **GitHub Actions**: Free for public repos, included in most plans
-- **Fallback Claude API** (if used): ~$0.05-$0.20 per PR review
 
 ## Next Steps
 
@@ -150,17 +165,20 @@ After successful test:
 4. ✅ Train team on Bob's feedback format
 5. ✅ Monitor costs and usage
 
-## Fallback: Use Direct Claude API (Testing Only)
+## How to Get Groq API Key (Free!)
 
-If ICA is not yet configured, you can temporarily use direct Claude API for testing:
+1. Go to https://console.groq.com
+2. Sign up with Google/GitHub
+3. Go to API Keys section
+4. Create new key
+5. Copy the key (starts with `gsk_`)
+6. Add to GitHub Secrets as `GROQ_API_KEY`
 
-1. Get API key from https://console.anthropic.com/
-2. Add this secret:
-   ```bash
-   ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
-   ```
-3. Bob will automatically fall back to Claude API if ICA is not configured
-4. **Important**: Switch to ICA models for production use
+**Groq is perfect for:**
+- ⚡ Testing Bob before ICA setup
+- 🚀 Fast PR reviews (10x faster inference)
+- 💰 Free tier: 14,400 requests/day
+- 🎯 Production use (if ICA not available)
 
 See `docs/ICA_MODEL_SETUP.md` for full ICA configuration details.
 
