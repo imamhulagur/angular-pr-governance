@@ -83,33 +83,82 @@ def autonomous_review_with_github_api():
     # Step 1: Get PR files using GitHub API
     print("\n📁 Step 1: Fetching PR files from GitHub...")
     pr_files = get_pr_files(owner, repo, pr_number)
+    print(f"   Total files in PR: {len(pr_files)}")
+    
+    # Debug: Show all files
+    for f in pr_files:
+        print(f"   - {f.get('filename')} ({f.get('status')})")
     
     # Step 2: Get actual file contents for analysis
     print("\n📄 Step 2: Fetching file contents...")
     file_contents = []
+    
+    # Get commit SHA from PR context
+    commit_sha = pr_context.get('commit_sha', pr_context.get('head_branch'))
+    print(f"   Using ref: {commit_sha}")
+    
     for file_info in pr_files[:10]:  # Limit to first 10 files
         filename = file_info.get('filename', '')
-        if filename.endswith(('.ts', '.html', '.css', '.scss')):
+        file_status = file_info.get('status', '')
+        
+        # Skip deleted files
+        if file_status == 'removed':
+            print(f"  ⊘ {filename} (deleted)")
+            continue
+            
+        if filename.endswith(('.ts', '.html', '.css', '.scss', '.json')):
             try:
-                content = get_file_content(owner, repo, filename, pr_context['head_branch'])
+                print(f"  → Fetching {filename}...")
+                content = get_file_content(owner, repo, filename, commit_sha)
                 file_contents.append({
                     "filename": filename,
                     "content": content,
                     "patch": file_info.get('patch', ''),
                     "additions": file_info.get('additions', 0),
-                    "deletions": file_info.get('deletions', 0)
+                    "deletions": file_info.get('deletions', 0),
+                    "status": file_status
                 })
-                print(f"  ✓ {filename} (+{file_info.get('additions', 0)}/-{file_info.get('deletions', 0)})")
+                print(f"  ✓ {filename} (+{file_info.get('additions', 0)}/-{file_info.get('deletions', 0)}) - {len(content)} chars")
             except Exception as e:
                 print(f"  ⚠️ Could not fetch {filename}: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"  ⊘ {filename} (skipped - not a code file)")
+    
+    print(f"\n✅ Successfully fetched {len(file_contents)} files for analysis")
+    
+    # If no files were fetched, analyze the patch directly
+    if len(file_contents) == 0:
+        print("⚠️ No file contents fetched, will analyze patches only")
+        for file_info in pr_files[:10]:
+            filename = file_info.get('filename', '')
+            if filename.endswith(('.ts', '.html', '.css', '.scss')):
+                file_contents.append({
+                    "filename": filename,
+                    "content": "",
+                    "patch": file_info.get('patch', ''),
+                    "additions": file_info.get('additions', 0),
+                    "deletions": file_info.get('deletions', 0)
+                })
     
     # Step 3: Analyze files with Groq AI
     print(f"\n🤖 Step 3: Analyzing {len(file_contents)} files with AI...")
+    
+    if len(file_contents) == 0:
+        print("❌ No files to analyze!")
+        return 0
+    
     groq_api_key = os.getenv("GROQ_API_KEY")
+    if not groq_api_key:
+        print("❌ GROQ_API_KEY not found!")
+        return 0
     
     # Build detailed analysis prompt with actual code
     files_summary = "\n\n".join([
-        f"### File: {f['filename']}\n```typescript\n{f['content'][:2000]}\n```\n**Changes:**\n```diff\n{f['patch'][:1000]}\n```"
+        f"### File: {f['filename']}\n" +
+        (f"**Full Content:**\n```typescript\n{f['content'][:3000]}\n```\n" if f['content'] else "") +
+        f"**Changes (Diff):**\n```diff\n{f['patch'][:2000]}\n```"
         for f in file_contents
     ])
     
